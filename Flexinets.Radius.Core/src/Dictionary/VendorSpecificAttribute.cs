@@ -38,6 +38,9 @@ namespace Flexinets.Radius.Core
                 byte length = vendorLength[0];
                 offset++;
 
+                if (length < 2) // Length should be at least 2 (1 byte for VendorCode and 1 byte for Length itself)
+                    throw new FormatException($"Invalid vendor attribute length: {length}");
+
                 var value = new byte[length - 2];
                 Buffer.BlockCopy(contentBytes, offset, value, 0, length - 2);
                 offset += length - 2;
