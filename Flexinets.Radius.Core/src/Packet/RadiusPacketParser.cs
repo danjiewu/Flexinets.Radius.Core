@@ -149,19 +149,19 @@ namespace Flexinets.Radius.Core
                 case PacketCode.AccountingRequest:
                 case PacketCode.DisconnectRequest:
                 case PacketCode.CoaRequest:
-                {
-                    HandleRequestMessageAuthenticator(sharedSecret, messageAuthenticatorPosition, packetBytes);
-                    Buffer.BlockCopy(Utils.CalculateRequestAuthenticator(sharedSecret, packetBytes),
-                        0, packetBytes, 4, 16);
-                    break;
-                }
+                    {
+                        HandleRequestMessageAuthenticator(sharedSecret, messageAuthenticatorPosition, packetBytes);
+                        Buffer.BlockCopy(Utils.CalculateRequestAuthenticator(sharedSecret, packetBytes),
+                            0, packetBytes, 4, 16);
+                        break;
+                    }
                 case PacketCode.StatusServer:
                 case PacketCode.AccessRequest:
-                {
-                    Buffer.BlockCopy(packet.Authenticator, 0, packetBytes, 4, 16);
-                    HandleRequestMessageAuthenticator(sharedSecret, messageAuthenticatorPosition, packetBytes);
-                    break;
-                }
+                    {
+                        Buffer.BlockCopy(packet.Authenticator, 0, packetBytes, 4, 16);
+                        HandleRequestMessageAuthenticator(sharedSecret, messageAuthenticatorPosition, packetBytes);
+                        break;
+                    }
                 case PacketCode.AccessAccept:
                 case PacketCode.AccessReject:
                 case PacketCode.AccessChallenge:
@@ -172,32 +172,32 @@ namespace Flexinets.Radius.Core
                 case PacketCode.CoaAck:
                 case PacketCode.CoaNak:
                 default:
-                {
-                    if (requestAuthenticator == null)
                     {
-                        throw new ArgumentNullException(nameof(requestAuthenticator),
-                            "Request-Authenticator is required when creating response packets");
-                    }
+                        if (requestAuthenticator == null)
+                        {
+                            throw new ArgumentNullException(nameof(requestAuthenticator),
+                                "Request-Authenticator is required when creating response packets");
+                        }
 
-                    if (messageAuthenticatorPosition != 0)
-                    {
-                        var messageAuthenticator = Utils.CalculateResponseMessageAuthenticator(
-                            packetBytes,
+                        if (messageAuthenticatorPosition != 0)
+                        {
+                            var messageAuthenticator = Utils.CalculateResponseMessageAuthenticator(
+                                packetBytes,
+                                sharedSecret,
+                                requestAuthenticator,
+                                messageAuthenticatorPosition);
+
+                            Buffer.BlockCopy(messageAuthenticator, 0, packetBytes, messageAuthenticatorPosition + 2, 16);
+                        }
+
+                        var authenticator = Utils.CalculateResponseAuthenticator(
                             sharedSecret,
                             requestAuthenticator,
-                            messageAuthenticatorPosition);
+                            packetBytes);
 
-                        Buffer.BlockCopy(messageAuthenticator, 0, packetBytes, messageAuthenticatorPosition + 2, 16);
+                        Buffer.BlockCopy(authenticator, 0, packetBytes, 4, 16);
+                        break;
                     }
-
-                    var authenticator = Utils.CalculateResponseAuthenticator(
-                        sharedSecret,
-                        requestAuthenticator,
-                        packetBytes);
-
-                    Buffer.BlockCopy(authenticator, 0, packetBytes, 4, 16);
-                    break;
-                }
             }
 
             return packetBytes;
@@ -311,28 +311,31 @@ namespace Flexinets.Radius.Core
                     if (typeCode == 26) // VSA
                     {
                         var vsa = new VendorSpecificAttribute(attributeValueBytes);
-                        var vsaType = _dictionary.GetVendorAttribute(vsa.VendorId, vsa.VendorCode);
+                        foreach (var attr in vsa.AttrNodes)
+                        {
+                            var vsaType = _dictionary.GetVendorAttribute(vsa.VendorId, attr.VendorCode);
 
-                        if (vsaType == null)
-                        {
-                            _logger.LogInformation("Unknown vsa: {id}:{code}", vsa.VendorId, vsa.VendorCode);
-                        }
-                        else
-                        {
-                            try
+                            if (vsaType == null)
                             {
-                                packet.AddAttributeObject(
-                                    vsaType.Name,
-                                    Attribute.ToObject(
-                                        vsa.Value,
-                                        vsaType.Type,
-                                        typeCode,
-                                        packet.Authenticator,
-                                        sharedSecret));
+                                _logger.LogInformation("Unknown vsa: {id}:{code}", vsa.VendorId, attr.VendorCode);
                             }
-                            catch (Exception ex)
+                            else
                             {
-                                _logger.LogError(ex, "Something went wrong with vsa {name}", vsaType.Name);
+                                try
+                                {
+                                    packet.AddAttributeObject(
+                                        vsaType.Name,
+                                        Attribute.ToObject(
+                                            attr.Value,
+                                            vsaType.Type,
+                                            typeCode,
+                                            packet.Authenticator,
+                                            sharedSecret));
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Something went wrong with vsa {name}", vsaType.Name);
+                                }
                             }
                         }
                     }

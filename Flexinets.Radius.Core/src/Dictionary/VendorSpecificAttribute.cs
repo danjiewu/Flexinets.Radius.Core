@@ -5,9 +5,10 @@ namespace Flexinets.Radius.Core
 {
     public class VendorSpecificAttribute
     {
-        public uint VendorId;
+        public readonly uint VendorId;
+        private readonly List<VendorAttrNode> _attrNodes = new List<VendorAttrNode>();
 
-        public List<VendorAttrNode> AttrNodes { get; } = new List<VendorAttrNode>();
+        public IReadOnlyCollection<VendorAttrNode> AttrNodes => _attrNodes;
 
         /// <summary>
         /// Create a vsa from bytes
@@ -27,31 +28,39 @@ namespace Flexinets.Radius.Core
             int offset = 4;
             while (offset < contentBytes.Length)
             {
-                VendorAttrNode node = new VendorAttrNode();
                 var vendorType = new byte[1];
                 Buffer.BlockCopy(contentBytes, offset, vendorType, 0, 1);
-                node.VendorCode = vendorType[0];
+                byte vendorCode = vendorType[0];
                 offset++;
 
                 var vendorLength = new byte[1];
                 Buffer.BlockCopy(contentBytes, offset, vendorLength, 0, 1);
-                node.Length = vendorLength[0];
+                byte length = vendorLength[0];
                 offset++;
 
-                var value = new byte[node.Length - 2];
-                Buffer.BlockCopy(contentBytes, offset, value, 0, node.Length - 2);
-                node.Value = value;
+                var value = new byte[length - 2];
+                Buffer.BlockCopy(contentBytes, offset, value, 0, length - 2);
+                offset += length - 2;
+
+                VendorAttrNode node = new VendorAttrNode(vendorCode, length, value);
                 offset += node.Length - 2;
 
-                AttrNodes.Add(node);
+                _attrNodes.Add(node);
             }
         }
 
         public class VendorAttrNode
         {
-            public byte Length;
-            public byte VendorCode;
-            public byte[]? Value;
+            public VendorAttrNode(byte vendorCode, byte length, byte[] value)
+            {
+                VendorCode = vendorCode;
+                Length = length;
+                Value = value;
+            }
+
+            public readonly byte Length;
+            public readonly byte VendorCode;
+            public readonly byte[] Value;
         }
     }
 }
