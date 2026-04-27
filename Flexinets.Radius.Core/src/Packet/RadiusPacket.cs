@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 
 namespace Flexinets.Radius.Core.PacketTypes
@@ -53,16 +52,40 @@ namespace Flexinets.Radius.Core.PacketTypes
         /// Gets a single attribute value with name cast to type
         /// Throws an exception if multiple attributes with the same name are found
         /// </summary>
-        public T GetAttribute<T>(string name) => GetAttributes<T>(name).SingleOrDefault();
+        public T GetAttribute<T>(string name)
+        {
+            if (!Attributes.TryGetValue(name, out var attributeValues) || attributeValues.Count == 0)
+            {
+                return default!;
+            }
+
+            if (attributeValues.Count > 1)
+            {
+                throw new InvalidOperationException("Sequence contains more than one element");
+            }
+
+            return (T)attributeValues[0];
+        }
 
 
         /// <summary>
         /// Gets multiple attribute values with the same name cast to type
         /// </summary>
-        public List<T> GetAttributes<T>(string name) =>
-            Attributes.TryGetValue(name, out var attribute)
-                ? attribute.Cast<T>().ToList()
-                : new List<T>();
+        public List<T> GetAttributes<T>(string name)
+        {
+            if (!Attributes.TryGetValue(name, out var attributeValues))
+            {
+                return new List<T>();
+            }
+
+            var values = new List<T>(attributeValues.Count);
+            foreach (var attributeValue in attributeValues)
+            {
+                values.Add((T)attributeValue);
+            }
+
+            return values;
+        }
 
 
         public void AddAttribute(string name, string value) => AddAttributeObject(name, value);
@@ -82,12 +105,13 @@ namespace Flexinets.Radius.Core.PacketTypes
 
         internal void AddAttributeObject(string name, object value)
         {
-            if (!Attributes.ContainsKey(name))
+            if (!Attributes.TryGetValue(name, out var attributeValues))
             {
-                Attributes.Add(name, new List<object>());
+                attributeValues = new List<object>();
+                Attributes.Add(name, attributeValues);
             }
 
-            Attributes[name].Add(value);
+            attributeValues.Add(value);
         }
     }
 }

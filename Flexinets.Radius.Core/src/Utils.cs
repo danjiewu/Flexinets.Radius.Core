@@ -1,5 +1,4 @@
-﻿using System;
-using System.Linq;
+using System;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -137,7 +136,9 @@ namespace Flexinets.Radius.Core
             byte[] requestAuthenticator,
             byte[] packetBytes)
         {
-            var bytes = packetBytes.Concat(sharedSecret).ToArray();
+            var bytes = new byte[packetBytes.Length + sharedSecret.Length];
+            Buffer.BlockCopy(packetBytes, 0, bytes, 0, packetBytes.Length);
+            Buffer.BlockCopy(sharedSecret, 0, bytes, packetBytes.Length, sharedSecret.Length);
             Buffer.BlockCopy(requestAuthenticator, 0, bytes, 4, 16);
 
             using var md5 = MD5.Create();
@@ -154,19 +155,15 @@ namespace Flexinets.Radius.Core
             byte[] sharedSecret,
             byte[]? requestAuthenticator)
         {
-            var messageAuthenticator =
-                packetBytes[(messageAuthenticatorPosition + 2)..(messageAuthenticatorPosition + 16 + 2)];
-
-            var tempPacket = new byte[packetBytes.Length];
-            Buffer.BlockCopy(packetBytes, 0, tempPacket, 0, packetBytes.Length);
-
             var calculatedMessageAuthenticator = CalculateMessageAuthenticator(
-                tempPacket,
+                packetBytes,
                 sharedSecret,
                 requestAuthenticator,
                 messageAuthenticatorPosition);
 
-            return calculatedMessageAuthenticator.SequenceEqual(messageAuthenticator);
+            return CryptographicOperations.FixedTimeEquals(
+                calculatedMessageAuthenticator,
+                packetBytes.AsSpan(messageAuthenticatorPosition + 2, 16));
         }
 
 
@@ -188,7 +185,7 @@ namespace Flexinets.Radius.Core
             {
                 if (attribute.Key == "User-Password")
                 {
-                    sb.AppendLine($"{attribute.Key} length : {attribute.Value.First().ToString()?.Length}");
+                    sb.AppendLine($"{attribute.Key} length : {attribute.Value[0].ToString()?.Length}");
                 }
                 else
                 {

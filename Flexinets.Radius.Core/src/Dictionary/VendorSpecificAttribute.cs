@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Buffers.Binary;
 
 namespace Flexinets.Radius.Core
 {
@@ -16,10 +17,12 @@ namespace Flexinets.Radius.Core
         /// <param name="contentBytes"></param>
         public VendorSpecificAttribute(byte[] contentBytes)
         {
-            var vendorId = new byte[4];
-            Buffer.BlockCopy(contentBytes, 0, vendorId, 0, 4);
-            Array.Reverse(vendorId);
-            VendorId = BitConverter.ToUInt32(vendorId, 0);
+            if (contentBytes.Length < 4)
+            {
+                throw new FormatException("Vendor specific attribute missing vendor id");
+            }
+
+            VendorId = BinaryPrimitives.ReadUInt32BigEndian(contentBytes.AsSpan(0, 4));
 
             // VendorSpecificAttribute supports multiple vendor attributes, each vendor attribute has the format of:
             // 1 byte for VendorCode
@@ -28,25 +31,29 @@ namespace Flexinets.Radius.Core
             int offset = 4;
             while (offset < contentBytes.Length)
             {
-                var vendorType = new byte[1];
-                Buffer.BlockCopy(contentBytes, offset, vendorType, 0, 1);
-                byte vendorCode = vendorType[0];
-                offset++;
+                if (contentBytes.Length - offset < 2)
+                {
+                    throw new FormatException("Vendor specific attribute header is truncated");
+                }
 
-                var vendorLength = new byte[1];
-                Buffer.BlockCopy(contentBytes, offset, vendorLength, 0, 1);
-                byte length = vendorLength[0];
-                offset++;
+                byte vendorCode = contentBytes[offset];
+                byte length = contentBytes[offset + 1];
 
                 if (length < 2) // Length should be at least 2 (1 byte for VendorCode and 1 byte for Length itself)
+                {
                     throw new FormatException($"Invalid vendor attribute length: {length}");
+                }
+
+                if (offset + length > contentBytes.Length)
+                {
+                    throw new FormatException($"Invalid vendor attribute length: {length}");
+                }
 
                 var value = new byte[length - 2];
-                Buffer.BlockCopy(contentBytes, offset, value, 0, length - 2);
-                offset += length - 2;
+                Buffer.BlockCopy(contentBytes, offset + 2, value, 0, length - 2);
 
                 VendorAttrNode node = new VendorAttrNode(vendorCode, length, value);
-                offset += node.Length - 2;
+                offset += length;
 
                 _attrNodes.Add(node);
             }

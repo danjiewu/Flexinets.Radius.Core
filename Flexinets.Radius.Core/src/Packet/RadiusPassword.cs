@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -11,55 +9,78 @@ namespace Flexinets.Radius.Core
         /// <summary>
         /// Encrypt/decrypt using XOR
         /// </summary>
-        private static byte[] EncryptDecrypt(byte[] input, byte[] key) =>
-            input.Zip(key, (v, k) => (byte)(v ^ k)).ToArray();
+        private static void EncryptDecrypt(ReadOnlySpan<byte> input, ReadOnlySpan<byte> key, Span<byte> destination)
+        {
+            for (var i = 0; i < input.Length; i++)
+            {
+                destination[i] = (byte)(input[i] ^ key[i]);
+            }
+        }
 
 
         /// <summary>
         /// Create a radius shared secret key
         /// </summary>
-        private static byte[] CreateKey(byte[] sharedSecret, byte[] authenticator)
+        private static byte[] CreateKey(byte[] sharedSecret, ReadOnlySpan<byte> authenticator)
         {
+            var hashInput = new byte[sharedSecret.Length + authenticator.Length];
+            Buffer.BlockCopy(sharedSecret, 0, hashInput, 0, sharedSecret.Length);
+            authenticator.CopyTo(hashInput.AsSpan(sharedSecret.Length));
+
             using var md5 = MD5.Create();
-            return md5.ComputeHash(sharedSecret.Concat(authenticator).ToArray());
+            return md5.ComputeHash(hashInput);
         }
 
 
         /// <summary>
         /// Decrypt user password
         /// </summary>
-        public static string Decrypt(byte[] sharedSecret, byte[] authenticator, byte[] passwordBytes)
+        public static string Decrypt(byte[] sharedSecret, byte[] authenticator, byte[] passwordBytes) =>
+            Decrypt(sharedSecret, authenticator, (ReadOnlySpan<byte>)passwordBytes);
+
+
+        /// <summary>
+        /// Decrypt user password
+        /// </summary>
+        public static string Decrypt(byte[] sharedSecret, byte[] authenticator, ReadOnlySpan<byte> passwordBytes)
         {
+            var decryptedBytes = new byte[passwordBytes.Length];
             var key = CreateKey(sharedSecret, authenticator);
-            var bytes = new List<byte>();
-            for (var n = 0; n < passwordBytes.Length / 16; n++)
+
+            for (var offset = 0; offset < passwordBytes.Length; offset += 16)
             {
-                var chunk = passwordBytes[(n * 16)..(n * 16 + 16)];
-                bytes.AddRange(EncryptDecrypt(chunk, key));
+                var chunk = passwordBytes.Slice(offset, 16);
+                EncryptDecrypt(chunk, key, decryptedBytes.AsSpan(offset, 16));
                 key = CreateKey(sharedSecret, chunk);
             }
 
-            return Encoding.UTF8.GetString(bytes.ToArray()).Replace("\0", "");
+            return Encoding.UTF8.GetString(decryptedBytes).TrimEnd('\0');
         }
 
 
         /// <summary>
         /// Encrypt a password
-        /// </summary>´
+        /// </summary>
         public static byte[] Encrypt(byte[] sharedSecret, byte[] authenticator, byte[] passwordBytes)
         {
-            Array.Resize(ref passwordBytes, passwordBytes.Length + (16 - passwordBytes.Length % 16));
+            var paddedPasswordBytes = new byte[GetEncryptedLength(passwordBytes.Length)];
+            Buffer.BlockCopy(passwordBytes, 0, paddedPasswordBytes, 0, passwordBytes.Length);
 
             var key = CreateKey(sharedSecret, authenticator);
-            var bytes = new List<byte>();
-            for (var n = 0; n < passwordBytes.Length / 16; n++)
+            var encryptedBytes = new byte[paddedPasswordBytes.Length];
+
+            for (var offset = 0; offset < paddedPasswordBytes.Length; offset += 16)
             {
-                var xor = EncryptDecrypt(passwordBytes[(n * 16)..(n * 16 + 16)], key);
-                bytes.AddRange(xor);
-                key = CreateKey(sharedSecret, xor);
+                var encryptedChunk = encryptedBytes.AsSpan(offset, 16);
+                EncryptDecrypt(paddedPasswordBytes.AsSpan(offset, 16), key, encryptedChunk);
+                key = CreateKey(sharedSecret, encryptedChunk);
             }
 
-            return bytes.ToArray();
+            return encryptedBytes;
         }
+
+
+        internal static int GetEncryptedLength(int passwordLength) =>
+            passwordLength + (16 - passwordLength % 16);
     }
 }

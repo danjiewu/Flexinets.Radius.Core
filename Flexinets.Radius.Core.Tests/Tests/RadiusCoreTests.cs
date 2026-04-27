@@ -463,9 +463,9 @@ public class RadiusCoreTests
         Assert.Multiple(() =>
         {
             Assert.That(vsa.VendorId, Is.EqualTo(10415));
-            Assert.That(vsa.VendorCode, Is.EqualTo(8));
-            Assert.That(vsa.Value.ToHexString(), Is.EqualTo("3234303031"));
-            Assert.That(vsa.Length, Is.EqualTo(7));
+            Assert.That(vsa.AttrNodes.First().VendorCode, Is.EqualTo(8));
+            Assert.That(vsa.AttrNodes.First().Value.ToHexString(), Is.EqualTo("3234303031"));
+            Assert.That(vsa.AttrNodes.First().Length, Is.EqualTo(7));
         });
     }
 
