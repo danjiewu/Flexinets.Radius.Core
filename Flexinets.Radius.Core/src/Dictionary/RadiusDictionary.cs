@@ -77,7 +77,7 @@ namespace Flexinets.Radius.Core
         /// Read and parse dictionary from file in Radiator format
         /// </summary>
         public static async Task<IRadiusDictionary> LoadAsync(string dictionaryFilePath) =>
-            Parse(await File.ReadAllTextAsync(dictionaryFilePath));
+            Parse(await File.ReadAllTextAsync(dictionaryFilePath).ConfigureAwait(false));
 
 
         public DictionaryVendorAttribute? GetVendorAttribute(uint vendorId, byte vendorCode) =>

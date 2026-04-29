@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -28,9 +29,11 @@ namespace Flexinets.Radius.Core
         /// <summary>
         /// Convert a byte array to a string of hex encoded bytes
         /// </summary>
-        public static string ToHexString(this byte[] bytes) =>
-            BitConverter.ToString(bytes).ToLowerInvariant().Replace("-", "");
+        public static string ToHexString(this ReadOnlySpan<byte> bytes) =>
+            BitConverter.ToString(bytes.ToArray()).ToLowerInvariant().Replace("-", "");
 
+        public static string ToHexString(this ReadOnlyMemory<byte> bytes) =>
+            BitConverter.ToString(bytes.ToArray()).ToLowerInvariant().Replace("-", "");
 
         /// <summary>
         /// Get the mccmnc as a string from a 3GPP-User-Location-Info vendor attribute.
@@ -79,7 +82,7 @@ namespace Flexinets.Radius.Core
         /// <param name="requestAuthenticator">Request authenticator from corresponding request packet</param>
         /// <param name="messageAuthenticatorPosition">Position of the message authenticator attribute in the packet bytes</param>
         public static byte[] CalculateResponseMessageAuthenticator(
-            byte[] packetBytes,
+            ReadOnlySpan<byte> packetBytes,
             byte[] sharedSecret,
             byte[] requestAuthenticator,
             int messageAuthenticatorPosition) =>
@@ -102,26 +105,33 @@ namespace Flexinets.Radius.Core
         /// <param name="sharedSecret">Shared secret</param>
         /// <param name="messageAuthenticatorPosition">Position of the message authenticator attribute in the packet bytes</param>
         public static byte[] CalculateRequestMessageAuthenticator(
-            byte[] packetBytes,
+            ReadOnlySpan<byte> packetBytes,
             byte[] sharedSecret,
             int messageAuthenticatorPosition) =>
             CalculateMessageAuthenticator(packetBytes, sharedSecret, null, messageAuthenticatorPosition);
 
 
         private static byte[] CalculateMessageAuthenticator(
-            byte[] packetBytes,
+            ReadOnlySpan<byte> packetBytes,
             byte[] sharedSecret,
             byte[]? requestAuthenticator,
             int messageAuthenticatorPosition)
         {
-            var temp = new byte[packetBytes.Length];
-            packetBytes.CopyTo(temp, 0);
-            Buffer.BlockCopy(AuthenticatorZeros, 0, temp, messageAuthenticatorPosition + 2, AuthenticatorZeros.Length);
+            var temp = ArrayPool<byte>.Shared.Rent(packetBytes.Length);
+            try
+            {
+                var tempSpan = temp.AsSpan(0, packetBytes.Length);
+                packetBytes.CopyTo(tempSpan);
+                AuthenticatorZeros.CopyTo(tempSpan[(messageAuthenticatorPosition + 2)..]);
+                requestAuthenticator?.CopyTo(temp, 4);
 
-            requestAuthenticator?.CopyTo(temp, 4);
-
-            using var md5 = new HMACMD5(sharedSecret);
-            return md5.ComputeHash(temp);
+                using var md5 = new HMACMD5(sharedSecret);
+                return md5.ComputeHash(temp, 0, packetBytes.Length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(temp, clearArray: true);
+            }
         }
 
 
@@ -134,15 +144,24 @@ namespace Flexinets.Radius.Core
         public static byte[] CalculateResponseAuthenticator(
             byte[] sharedSecret,
             byte[] requestAuthenticator,
-            byte[] packetBytes)
+            ReadOnlySpan<byte> packetBytes)
         {
-            var bytes = new byte[packetBytes.Length + sharedSecret.Length];
-            Buffer.BlockCopy(packetBytes, 0, bytes, 0, packetBytes.Length);
-            Buffer.BlockCopy(sharedSecret, 0, bytes, packetBytes.Length, sharedSecret.Length);
-            Buffer.BlockCopy(requestAuthenticator, 0, bytes, 4, 16);
+            var length = packetBytes.Length + sharedSecret.Length;
+            var bytes = ArrayPool<byte>.Shared.Rent(length);
+            try
+            {
+                var bytesSpan = bytes.AsSpan(0, length);
+                packetBytes.CopyTo(bytesSpan);
+                sharedSecret.CopyTo(bytesSpan[packetBytes.Length..]);
+                requestAuthenticator.CopyTo(bytes, 4);
 
-            using var md5 = MD5.Create();
-            return md5.ComputeHash(bytes);
+                using var md5 = MD5.Create();
+                return md5.ComputeHash(bytes, 0, length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(bytes, clearArray: true);
+            }
         }
 
 
@@ -150,7 +169,7 @@ namespace Flexinets.Radius.Core
         /// Validate message authenticator in packet
         /// </summary>
         public static bool ValidateMessageAuthenticator(
-            byte[] packetBytes,
+            ReadOnlySpan<byte> packetBytes,
             int messageAuthenticatorPosition,
             byte[] sharedSecret,
             byte[]? requestAuthenticator)
@@ -163,15 +182,15 @@ namespace Flexinets.Radius.Core
 
             return CryptographicOperations.FixedTimeEquals(
                 calculatedMessageAuthenticator,
-                packetBytes.AsSpan(messageAuthenticatorPosition + 2, 16));
+                packetBytes.Slice(messageAuthenticatorPosition + 2, 16));
         }
 
 
         /// <summary>
         /// Calculate the request authenticator used in accounting, disconnect and coa requests
         /// </summary>
-        internal static byte[] CalculateRequestAuthenticator(byte[] sharedSecret, byte[] packetBytes) =>
-            CalculateResponseAuthenticator(sharedSecret, new byte[16], packetBytes);
+        internal static byte[] CalculateRequestAuthenticator(byte[] sharedSecret, ReadOnlySpan<byte> packetBytes) =>
+            CalculateResponseAuthenticator(sharedSecret, AuthenticatorZeros, packetBytes);
 
 
         /// <summary>

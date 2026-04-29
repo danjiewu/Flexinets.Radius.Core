@@ -26,11 +26,10 @@ namespace Flexinets.Radius.Core
             _skipBlastRadiusChecks = skipBlastRadiusChecks;
         }
 
-
         /// <summary>
         /// Parses packet bytes and returns an IRadiusPacket
         /// </summary>
-        public IRadiusPacket Parse(byte[] packetBytes, byte[] sharedSecret, byte[]? requestAuthenticator = null)
+        public IRadiusPacket Parse(ReadOnlyMemory<byte> packetBytes, byte[] sharedSecret, byte[]? requestAuthenticator = null)
         {
             var packetLength = GetPacketLength(packetBytes);
             if (packetBytes.Length < packetLength)
@@ -41,7 +40,7 @@ namespace Flexinets.Radius.Core
 
             var effectivePacketBytes = packetBytes.Length == packetLength
                 ? packetBytes
-                : TrimPacketBytes(packetBytes, packetLength);
+                : packetBytes[..packetLength];
 
             var (packet, messageAuthenticatorPosition) = ParsePacketBytes(effectivePacketBytes, sharedSecret);
 
@@ -49,7 +48,7 @@ namespace Flexinets.Radius.Core
             if ((packet is AccountingRequest
                  || packet is DisconnectRequest
                  || packet is CoaRequest) && !packet.Authenticator.AsSpan().SequenceEqual(
-                     Utils.CalculateRequestAuthenticator(sharedSecret, effectivePacketBytes)))
+                     Utils.CalculateRequestAuthenticator(sharedSecret, effectivePacketBytes.Span)))
             {
                 throw new InvalidOperationException(
                     $"Invalid request authenticator in packet {packet.Identifier}, check secret?");
@@ -58,7 +57,7 @@ namespace Flexinets.Radius.Core
             // If the packet contains a Message-Authenticator it must be valid regardless of if it is required
             if (messageAuthenticatorPosition != 0
                 && !Utils.ValidateMessageAuthenticator(
-                    effectivePacketBytes,
+                    effectivePacketBytes.Span,
                     messageAuthenticatorPosition,
                     sharedSecret,
                     requestAuthenticator))
@@ -105,15 +104,16 @@ namespace Flexinets.Radius.Core
         /// Parse bytes into packet with attributes
         /// </summary>
         private (RadiusPacket packet, int messageAuthenticatorPosition) ParsePacketBytes(
-            byte[] packetBytes,
+            ReadOnlyMemory<byte> packetBytes,
             byte[] sharedSecret)
         {
-            var packet = RadiusPacket.CreateFromCode((PacketCode)packetBytes[0]);
-            packet.Authenticator = packetBytes.AsSpan(4, 16).ToArray();
-            packet.Identifier = packetBytes[1];
-            packet.Code = (PacketCode)packetBytes[0];
+            var packetBytesSpan = packetBytes.Span;
+            var packet = RadiusPacket.CreateFromCode((PacketCode)packetBytesSpan[0]);
+            packet.Authenticator = packetBytesSpan.Slice(4, 16).ToArray();
+            packet.Identifier = packetBytesSpan[1];
+            packet.Code = (PacketCode)packetBytesSpan[0];
 
-            var messageAuthenticatorPosition = AddAttributesToPacket(packet, packetBytes.AsSpan(), sharedSecret);
+            var messageAuthenticatorPosition = AddAttributesToPacket(packet, packetBytesSpan, sharedSecret);
 
             return (packet, messageAuthenticatorPosition);
         }
@@ -224,26 +224,16 @@ namespace Flexinets.Radius.Core
         /// <summary>
         /// Get packet bytes trimmed to the packet length
         /// </summary>
-        private static byte[] TrimPacketBytes(byte[] packetBytes, int packetLength)
+        private static ushort GetPacketLength(ReadOnlyMemory<byte> packetBytes)
         {
-            var trimmedPacketBytes = new byte[packetLength];
-            Buffer.BlockCopy(packetBytes, 0, trimmedPacketBytes, 0, packetLength);
-            return trimmedPacketBytes;
-        }
-
-
-        /// <summary>
-        /// Get the packet length from the header
-        /// </summary>
-        private static ushort GetPacketLength(byte[] packetBytes)
-        {
-            if (packetBytes.Length < 20)
+            var packetBytesSpan = packetBytes.Span;
+            if (packetBytesSpan.Length < 20)
             {
                 throw new ArgumentOutOfRangeException(nameof(packetBytes),
-                    $"Packet length mismatch, expected at least 20, actual: {packetBytes.Length}");
+                    $"Packet length mismatch, expected at least 20, actual: {packetBytesSpan.Length}");
             }
 
-            var packetLength = BinaryPrimitives.ReadUInt16BigEndian(packetBytes.AsSpan(2, 2));
+            var packetLength = BinaryPrimitives.ReadUInt16BigEndian(packetBytesSpan.Slice(2, 2));
             if (packetLength < 20)
             {
                 throw new InvalidOperationException($"Packet length cannot be smaller than 20, was {packetLength}");
@@ -311,7 +301,7 @@ namespace Flexinets.Radius.Core
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "Something went wrong with {attributeTypeName}", attributeType.Name);
-                            _logger.LogDebug("Attribute bytes: {hex}", attributeValueBytes.ToArray().ToHexString());
+                            _logger.LogDebug("Attribute bytes: {hex}", attributeValueBytes.ToHexString());
                         }
                     }
                 }
